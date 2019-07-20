@@ -8,4 +8,6 @@ Monthly: media mnt
 
 So, essentially the daily scan checks places I put things regularly, weekly is the whole system and monthly is my backup drive and any other mounted filesystems.
 
+A good place to store my scripts is in the bin subfolder of your home folder ($HOME/bin) just make sure it's in your PATH
+
 As with all my scripts, I advise you to read through it carefully and understand what it does, changing any settings to suit your setup before you run it.
