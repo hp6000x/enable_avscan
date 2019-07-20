@@ -1,0 +1,86 @@
+#!/bin/bash
+#Script to install clam av (debian based distros only, anything ekse you'll have to do that yourself) and
+#enable daily scans of /home, weekly scans of the root filesystem and monthly scans of all other mounted filesystems.
+#
+#Error Codes:
+#	0	All Good!
+#	1	Failed to install clamav package. No automatic scans enabled.
+#	2	Not running as root.
+#	3	Could not create quarantine folder.
+#   4   Aborted due to SIGINT or SIGTERM - only applies to scheduled scan scripts
+
+if ! (which clamscan > /dev/null 2>&1); then
+  echo "Installing clam antivirus"
+  if (sudo apt install clamav); then
+    echo "Done."
+  else
+    echo "Something went wrong installing the package clamav. You'll need to install it yourself, then run this script again."
+    echo "Exiting."
+    exit 1
+  fi
+fi
+
+nicestr="$(which nice)"
+clamstr="$(which clamscan)"
+
+daily=0; weekly=1; monthly=2
+when=(daily weekly monthly)
+#arrays as (<daily> <weekly> <monthly>)
+what=(home root mounted)
+locations=("home pub" "bin boot etc lib lib64 opt root run sbin snap usr var" "media mnt")
+
+for counter in $daily $weekly $monthly; do
+  echo "Enabling ${when[$counter]} clam scan of ${what[$counter]} filesystems..." 
+  logfile="/var/log/antivirus_scan-${when[$counter]}.log"
+  logconfig="/etc/logrotate.d/antivirus_scan-${when[$counter]}"
+  scriptfile="/etc/cron.${when[$counter]}/antivirus_scan"
+  cat <<- _EOF_ | sudo tee "$scriptfile" > /dev/null 2>&1 #create the appropriate anacron script
+	#!/bin/bash
+	killed() {
+	  echo "Scan aborted at $(date)" >> $logfile
+	  exit 4
+	}
+	trap killed SIGINT SIGTERM SIGHUP
+	if [[ ! -e "$logfile" ]]; then
+	  echo "Log created: \$(date)" > "$logfile"
+	fi
+	echo >> "$logfile"
+	echo "Scan started: \$(date)" >> "$logfile"
+	errorstr="without"
+	for folder in ${locations[$counter]}; do
+	  echo "Scanning /\$folder..." >> "$logfile"
+	  if ! ($nicestr -n 20 $clamstr -ovrz --move="/quarantine/" /"\$folder"/); then
+	    errorstr="with"
+	  fi
+	done
+	echo "Scan finished: \$(date) \$errorstr errors." >> "$logfile"
+	_EOF_
+  sudo chmod a+x "$scriptfile" #make the anacron script executable
+  echo "Created script $scriptfile."
+  echo "Creating logrotate config for $logfile..."
+  cat <<- _EOF_ | sudo tee "$logconfig" > /dev/null 2>&1
+	$logfile {
+	  rotate 6
+	  monthly
+	  compress
+	  missingok
+	  notifempty
+	}
+	_EOF_
+  echo "Created config $logconfig."
+  counter=$((counter+1))  
+done
+  
+if [[ ! -d "/quarantine" ]]; then
+  echo "Creating quarantine folder, you may be asked for your password..."
+  if (sudo mkdir "/quarantine"); then
+    sudo chmod a+rw /quarantine
+    echo "Done."
+  else
+    echo "Failed to create quarantine folder. Daily and weekly scans are enabled but may not work correctly. You will need to create the /quarantine folder by typing sudo mkdir /quarantine/"
+    echo "Exiting."
+    exit 3
+  fi
+else
+  echo "Done."
+fi
